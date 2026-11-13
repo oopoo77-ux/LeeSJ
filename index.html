@@ -190,6 +190,8 @@
 
   .btn-stack{ margin-top:8px; }
   .btn-submit-cta{ display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:18px; border-radius:100px; font-weight:700; font-size:17px; background:var(--orange); color:#fff; }
+  .btn-submit-cta:disabled{ opacity:.65; cursor:wait; }
+  .form-error{ margin-top:12px; color:#B42318; font-size:14px; line-height:1.6; }
   .btn-submit-cta svg{ width:18px; height:18px; }
 
   .form-note{ font-size:12px; color:var(--ink-faint); text-align:center; margin-top:16px; }
@@ -374,6 +376,7 @@
     <div class="pad">
       <div class="form-card">
         <form id="quoteForm">
+          <input type="checkbox" name="botcheck" id="botcheck" style="display:none;" tabindex="-1" autocomplete="off" aria-hidden="true">
           <div class="f-row">
             <label for="fName">보호자성명 <em>*</em></label>
             <input id="fName" type="text" placeholder="이름을 입력해 주세요." required>
@@ -418,6 +421,7 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
             </button>
           </div>
+          <p class="form-error" id="formError" role="alert" hidden></p>
           <div class="form-note">제출한 정보는 상담 목적 외에는 사용되지 않습니다.</div>
         </form>
         <div class="receipt" id="receipt">
@@ -705,30 +709,50 @@
     document.getElementById('modalConsent').classList.remove('show');
   });
 
-  /* ===== 폼 제출 =====
-     ↓↓↓ web3forms.com 에서 발급받은 본인 Access Key로 교체하세요 (없으면 상담 접수 메일이 발송되지 않습니다) */
-  const WEB3FORMS_ACCESS_KEY = 'YOUR_ACCESS_KEY_HERE';
+  /* ===== Web3Forms 상담 신청 이메일 전송 ===== */
+  const WEB3FORMS_ACCESS_KEY = 'd5cce3da-111c-4d8a-a0e3-2c79d6a2a926';
 
   async function submitLead(entry){
-    if(WEB3FORMS_ACCESS_KEY !== 'YOUR_ACCESS_KEY_HERE'){
-      try{
-        await fetch('https://api.web3forms.com/submit', {
-          method:'POST',
-          headers:{ 'Content-Type':'application/json', Accept:'application/json' },
-          body: JSON.stringify({
-            access_key: WEB3FORMS_ACCESS_KEY,
-            subject:'[한우리독서토론논술] 새 상담 문의',
-            from_name:'한우리독서토론논술 랜딩페이지',
-            보호자성명: entry.name, 보호자휴대전화번호: entry.phone, 자녀학년: entry.grades, 접수시각: entry.time
-          })
-        });
-      }catch(e){ console.error('이메일 전송 실패', e); }
+    const response = await fetch('https://api.web3forms.com/submit', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', Accept:'application/json' },
+      body: JSON.stringify({
+        access_key: WEB3FORMS_ACCESS_KEY,
+        subject:'[한우리독서토론논술] 새 상담 문의',
+        from_name:'한우리독서토론논술 랜딩페이지',
+        보호자성명: entry.name,
+        보호자휴대전화번호: entry.phone,
+        자녀학년: entry.grades,
+        개인정보수집이용동의: '동의',
+        접수시각: entry.time,
+        botcheck: document.getElementById('botcheck').checked
+      })
+    });
+    const result = await response.json();
+    if(!response.ok || result.success !== true){
+      throw new Error('상담 신청 전송 실패');
     }
   }
 
   const form1 = document.getElementById('quoteForm');
+  const submitButton = form1.querySelector('[type="submit"]');
+  const submitButtonContent = submitButton.innerHTML;
+  const formError = document.getElementById('formError');
+  let isSubmitting = false;
+
   form1.addEventListener('submit', async e => {
     e.preventDefault();
+    if(isSubmitting) return;
+    formError.hidden = true;
+    formError.textContent = '';
+    if(!form1.reportValidity()) return;
+    const name = document.getElementById('fName').value.trim();
+    const phone = document.getElementById('fPhone').value.trim();
+    if(!name || !phone){
+      formError.textContent = '보호자 성명과 휴대전화번호를 입력해 주세요.';
+      formError.hidden = false;
+      return;
+    }
     if(childGrades.length === 0){
       alert('자녀학년을 선택 후 [자녀 추가] 버튼을 눌러주세요.');
       return;
@@ -738,18 +762,35 @@
       return;
     }
     const entry = {
-      name: document.getElementById('fName').value,
-      phone: document.getElementById('fPhone').value,
+      name: name,
+      phone: phone,
       grades: childGrades.join(', '),
-      time: new Date().toISOString()
+      time: new Date().toLocaleString('ko-KR', { timeZone:'Asia/Seoul', hour12:false }) + ' (한국시간)'
     };
-    await submitLead(entry);
-    form1.style.display='none';
-    document.getElementById('receiptDetail').textContent = entry.grades + ' 자녀 기준으로 곧 연락드릴게요.';
-    document.getElementById('receipt').classList.add('show');
+    isSubmitting = true;
+    submitButton.disabled = true;
+    submitButton.textContent = '전송 중...';
+    form1.setAttribute('aria-busy', 'true');
+    try{
+      await submitLead(entry);
+      form1.style.display = 'none';
+      document.getElementById('receiptDetail').textContent = entry.grades + ' 자녀 기준으로 곧 연락드릴게요.';
+      document.getElementById('receipt').classList.add('show');
+    }catch(error){
+      formError.textContent = '상담 신청 전송을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요. 문제가 계속되면 053-616-1017로 연락해 주세요.';
+      formError.hidden = false;
+    }finally{
+      isSubmitting = false;
+      submitButton.disabled = false;
+      submitButton.innerHTML = submitButtonContent;
+      form1.removeAttribute('aria-busy');
+    }
   });
 
   window.resetForm = function(){
+    if(isSubmitting) return;
+    formError.hidden = true;
+    formError.textContent = '';
     form1.reset();
     form1.style.display='block';
     childGrades = [];
